@@ -6,12 +6,13 @@ const Carrito = require('../models/Carrito');
 const CarritoProducto = require('../models/CarritoProducto');
 const Producto = require('../models/Producto');
 
-// Obtener carrito del usuario (con datos reales)
+// Obtener carrito del usuario (crea uno si no existe)
 router.get('/:id', async (req, res) => {
   try {
     const id_usuario = req.params.id;
 
-    const carrito = await Carrito.findOne({
+    // Buscar carrito existente
+    let carrito = await Carrito.findOne({
       where: { id_usuario },
       include: {
         model: Producto,
@@ -21,8 +22,19 @@ router.get('/:id', async (req, res) => {
       },
     });
 
+    // Si no existe carrito, crearlo vacío
     if (!carrito) {
-      return res.status(404).json({ error: 'Carrito no encontrado' });
+      carrito = await Carrito.create({ id_usuario });
+      // Volver a cargar con include vacío
+      carrito = await Carrito.findOne({
+        where: { id_usuario },
+        include: {
+          model: Producto,
+          through: {
+            attributes: ['cantidad'],
+          },
+        },
+      });
     }
 
     const productos = carrito.Productos.map(prod => ({
@@ -88,8 +100,8 @@ router.delete('/:id/eliminar', async (req, res) => {
     const deleted = await CarritoProducto.destroy({
       where: {
         id_carrito: carrito.id,
-        id_producto
-      }
+        id_producto,
+      },
     });
 
     if (deleted === 0) {
@@ -116,8 +128,8 @@ router.post('/:id/finalizar', async (req, res) => {
       fecha_pedido: new Date().toISOString(),
       estado: 'pendiente',
       direccion_envio,
-      metodo_pago
-    }
+      metodo_pago,
+    },
   });
 });
 
