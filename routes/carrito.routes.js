@@ -1,84 +1,89 @@
 const express = require('express');
 const router = express.Router();
-const { Carrito, CarritoProducto, Producto } = require('../models');
 
-// Obtener carrito del usuario (GET /api/carrito/:id)
+// Importa modelos directamente
+const Carrito = require('../models/Carrito');
+const CarritoProducto = require('../models/CarritoProducto');
+const Producto = require('../models/Producto');
+
+// Obtener carrito del usuario (con datos reales)
 router.get('/:id', async (req, res) => {
-  const id_usuario = req.params.id;
-
   try {
-    // Buscar carrito del usuario
+    const id_usuario = req.params.id;
+
     const carrito = await Carrito.findOne({
       where: { id_usuario },
       include: {
         model: Producto,
-        through: { attributes: ['cantidad'] }
-      }
+        through: {
+          attributes: ['cantidad'],
+        },
+      },
     });
 
     if (!carrito) {
       return res.status(404).json({ error: 'Carrito no encontrado' });
     }
 
-    // Formatear respuesta
-    const productos = carrito.Productos.map(p => ({
-      id: p.id,
-      nombre: p.nombre,
-      cantidad: p.CarritoProducto.cantidad,
-      precio_unitario: p.precio
+    const productos = carrito.Productos.map(prod => ({
+      id: prod.id,
+      nombre: prod.nombre,
+      cantidad: prod.CarritoProducto.cantidad,
+      precio_unitario: prod.precio,
     }));
 
-    const total = productos.reduce((acc, prod) => acc + prod.precio_unitario * prod.cantidad, 0);
+    const total = productos.reduce((acc, p) => acc + p.precio_unitario * p.cantidad, 0);
 
-    res.json({
-      id_usuario: carrito.id_usuario,
-      productos,
-      total
-    });
+    res.json({ id_usuario: carrito.id_usuario, productos, total });
   } catch (error) {
-    console.error('Error al obtener el carrito:', error);
-    res.status(500).json({ error: 'Error del servidor' });
+    console.error('❌ Error al obtener el carrito:', error);
+    res.status(500).json({ error: 'Error al obtener el carrito' });
   }
 });
 
-// Agregar producto al carrito (POST /api/carrito/:id/agregar)
+// Agregar producto al carrito
 router.post('/:id/agregar', async (req, res) => {
-  const id_usuario = req.params.id;
-  const { id_producto, cantidad = 1 } = req.body;
-
   try {
-    let carrito = await Carrito.findOne({ where: { id_usuario } });
+    const id_usuario = req.params.id;
+    const { id_producto, cantidad } = req.body;
 
+    let carrito = await Carrito.findOne({ where: { id_usuario } });
     if (!carrito) {
       carrito = await Carrito.create({ id_usuario });
     }
 
-    const [item, created] = await CarritoProducto.findOrCreate({
-      where: { id_carrito: carrito.id, id_producto },
-      defaults: { cantidad }
+    const [carritoProd, created] = await CarritoProducto.findOrCreate({
+      where: {
+        id_carrito: carrito.id,
+        id_producto,
+      },
+      defaults: {
+        cantidad,
+      },
     });
 
     if (!created) {
-      item.cantidad += cantidad;
-      await item.save();
+      carritoProd.cantidad += cantidad;
+      await carritoProd.save();
     }
 
     res.json({ mensaje: 'Producto agregado al carrito' });
   } catch (error) {
-    console.error('Error al agregar producto al carrito:', error);
-    res.status(500).json({ error: 'Error del servidor' });
+    console.error('❌ Error al agregar producto:', error);
+    res.status(500).json({ error: 'Error al agregar producto' });
   }
 });
 
-// Eliminar producto del carrito (DELETE /api/carrito/:id/eliminar)
+// Eliminar producto del carrito
 router.delete('/:id/eliminar', async (req, res) => {
-  const id_usuario = req.params.id;
-  const { id_producto } = req.body;
-
   try {
-    const carrito = await Carrito.findOne({ where: { id_usuario } });
+    const id_usuario = req.params.id;
+    const { id_producto } = req.body;
 
-    if (!carrito) return res.status(404).json({ error: 'Carrito no encontrado' });
+    const carrito = await Carrito.findOne({ where: { id_usuario } });
+    if (!carrito) {
+      return res.status(404).json({ error: 'Carrito no encontrado' });
+    }
 
     const deleted = await CarritoProducto.destroy({
       where: {
@@ -87,63 +92,33 @@ router.delete('/:id/eliminar', async (req, res) => {
       }
     });
 
-    if (!deleted) return res.status(404).json({ error: 'Producto no encontrado en el carrito' });
+    if (deleted === 0) {
+      return res.status(404).json({ error: 'Producto no estaba en el carrito' });
+    }
 
-    res.json({ mensaje: 'Producto eliminado del carrito' });
-  } catch (error) {
-    console.error('Error al eliminar producto del carrito:', error);
-    res.status(500).json({ error: 'Error del servidor' });
+    return res.json({ mensaje: 'Producto eliminado del carrito' });
+  } catch (err) {
+    console.error('❌ Error eliminando producto del carrito:', err);
+    return res.status(500).json({ error: 'Error interno del servidor' });
   }
 });
 
-// Finalizar compra (POST /api/carrito/:id/finalizar)
+// Finalizar compra
 router.post('/:id/finalizar', async (req, res) => {
-  const id_usuario = req.params.id;
   const { direccion_envio, metodo_pago } = req.body;
+  const id_usuario = req.params.id;
 
-  try {
-    const carrito = await Carrito.findOne({
-      where: { id_usuario },
-      include: {
-        model: Producto,
-        through: { attributes: ['cantidad'] }
-      }
-    });
-
-    if (!carrito || carrito.Productos.length === 0) {
-      return res.status(400).json({ error: 'El carrito está vacío' });
+  // Aquí puedes conectar tu lógica de pedidos si tienes un modelo Pedido
+  res.json({
+    mensaje: 'Compra finalizada con éxito',
+    pedido: {
+      id_usuario: Number(id_usuario),
+      fecha_pedido: new Date().toISOString(),
+      estado: 'pendiente',
+      direccion_envio,
+      metodo_pago
     }
-
-    const detalles = carrito.Productos.map(p => ({
-      id_producto: p.id,
-      nombre: p.nombre,
-      cantidad: p.CarritoProducto.cantidad,
-      precio_unitario: p.precio
-    }));
-
-    const total = detalles.reduce((acc, item) => acc + item.precio_unitario * item.cantidad, 0);
-
-    // Aquí deberías crear un pedido real en base de datos si lo deseas
-
-    // Limpiar carrito después de finalizar
-    await CarritoProducto.destroy({ where: { id_carrito: carrito.id } });
-
-    res.json({
-      mensaje: 'Compra finalizada con éxito',
-      pedido: {
-        id_usuario: Number(id_usuario),
-        fecha_pedido: new Date().toISOString(),
-        estado: 'pendiente',
-        direccion_envio,
-        metodo_pago,
-        detalles,
-        total
-      }
-    });
-  } catch (error) {
-    console.error('Error al finalizar compra:', error);
-    res.status(500).json({ error: 'Error del servidor' });
-  }
+  });
 });
 
 module.exports = router;
